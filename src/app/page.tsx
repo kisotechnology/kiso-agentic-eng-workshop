@@ -62,7 +62,9 @@ export default function Home() {
         accumulated += decoder.decode(value, { stream: true });
       }
 
-      const parsed: FeedbackItem[] = JSON.parse(accumulated);
+      // Strip markdown code fences if the LLM wraps its response
+      const json = accumulated.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
+      const parsed: FeedbackItem[] = JSON.parse(json);
       setFeedback(parsed);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to get feedback");
