@@ -53,7 +53,13 @@ export async function listReviewers(): Promise<Reviewer[]> {
 export async function getReviewer(
   slug: string
 ): Promise<ReviewerWithContent | null> {
-  const filePath = path.join(REVIEWERS_DIR, `${slug}.md`);
+  const filePath = path.resolve(REVIEWERS_DIR, `${slug}.md`);
+  const reviewersRoot = `${REVIEWERS_DIR}${path.sep}`;
+
+  if (!filePath.startsWith(reviewersRoot)) {
+    return null;
+  }
+
   try {
     const raw = await readFile(filePath, "utf-8");
     const { attributes, body } = parseFrontmatter(raw);
