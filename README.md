@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Writing Feedback Studio
 
-## Getting Started
+Paste your writing, select a reviewer, get feedback as if that person reviewed it.
 
-First, run the development server:
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Add your OpenRouter API key to `.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+OPENROUTER_API_KEY=your-key-here
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the dev server:
 
-## Learn More
+```bash
+pnpm dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Adding Reviewers
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Drop a markdown file in the `reviewers/` directory. Format:
 
-## Deploy on Vercel
+```markdown
+---
+name: Your Reviewer
+description: Short tagline
+avatar: YR
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Write the reviewer's personality, what they look for,
+their pet peeves, and how they give feedback.
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The app picks up new files automatically — no config needed.
+
+## Architecture
+
+```
+src/app/page.tsx           → Main UI (client component)
+src/app/api/reviewers/     → GET: lists available reviewers
+src/app/api/feedback/      → POST: sends text to LLM, streams feedback
+src/lib/reviewers.ts       → Reads reviewer markdown files
+reviewers/                 → Reviewer brain docs (markdown + frontmatter)
+```
