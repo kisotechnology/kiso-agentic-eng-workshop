@@ -31,6 +31,9 @@ Review the writing below. Return a JSON array of feedback items. Each item has:
 Return ONLY the JSON array, no other text. Example format:
 [{"quote": "exact text from their writing", "comment": "your feedback here"}]`;
 
+  const startTime = Date.now();
+  const model = "z-ai/glm-4.7:nitro";
+
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -40,7 +43,7 @@ Return ONLY the JSON array, no other text. Example format:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "z-ai/glm-4.7:nitro",
+        model,
         provider: { order: ["Cerebras", "DeepInfra", "Nebius"] },
         stream: true,
         messages: [
@@ -63,7 +66,11 @@ Return ONLY the JSON array, no other text. Example format:
     async start(controller) {
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
       let buffer = "";
+      let usage: Record<string, unknown> = {};
+      let responseModel = model;
+      let firstTokenTime: number | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -80,9 +87,12 @@ Return ONLY the JSON array, no other text. Example format:
 
           try {
             const parsed = JSON.parse(data);
+            if (parsed.model) responseModel = parsed.model;
+            if (parsed.usage) usage = parsed.usage;
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) {
-              controller.enqueue(new TextEncoder().encode(content));
+              if (!firstTokenTime) firstTokenTime = Date.now();
+              controller.enqueue(encoder.encode(content));
             }
           } catch {
             // skip malformed chunks
@@ -90,6 +100,26 @@ Return ONLY the JSON array, no other text. Example format:
         }
       }
 
+      const latencyMs = Date.now() - startTime;
+      const ttftMs = firstTokenTime ? firstTokenTime - startTime : null;
+      const completionTokens = (usage.completion_tokens as number) ?? 0;
+      const reasoningTokens = ((usage.completion_tokens_details as Record<string, unknown>)?.reasoning_tokens as number) ?? 0;
+      const outputTokens = completionTokens - reasoningTokens;
+      const cost = (usage.cost as number) ?? null;
+      const tps = latencyMs > 0 && completionTokens > 0 ? (completionTokens / latencyMs) * 1000 : null;
+
+      const stats = JSON.stringify({
+        model: responseModel,
+        input_tokens: (usage.prompt_tokens as number) ?? null,
+        output_tokens: outputTokens || null,
+        reasoning_tokens: reasoningTokens || null,
+        latency_ms: latencyMs,
+        ttft_ms: ttftMs,
+        tokens_per_second: tps ? Math.round(tps * 10) / 10 : null,
+        cost,
+      });
+
+      controller.enqueue(encoder.encode(`\n__STATS__${stats}`));
       controller.close();
     },
   });
