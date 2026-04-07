@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "setup": "ln -sf \"$CONDUCTOR_ROOT_PATH/.env.local\" .env.local && npx pnpm install",
+    "run": "npx pnpm run dev"
+  },
+  "runScriptMode": "concurrent"
+}

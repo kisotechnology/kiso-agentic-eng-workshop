@@ -88,25 +88,25 @@ export default function Home() {
           <label className="block text-sm font-medium text-zinc-600 mb-2">
             Reviewer
           </label>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-col gap-2">
             {reviewers.map((r) => (
               <button
                 key={r.slug}
                 onClick={() => setSelectedReviewer(r.slug)}
-                className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors ${
+                className={`w-full flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors focus:outline-none ${
                   selectedReviewer === r.slug
-                    ? "border-zinc-900 bg-white"
+                    ? "border-zinc-900 bg-white ring-1 ring-zinc-900"
                     : "border-zinc-200 bg-white hover:border-zinc-300"
                 }`}
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white">
                   {r.avatar}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-sm font-medium text-zinc-900">
                     {r.name}
                   </div>
-                  <div className="text-xs text-zinc-500">{r.description}</div>
+                  <div className="text-xs text-zinc-500 truncate">{r.description}</div>
                 </div>
               </button>
             ))}
