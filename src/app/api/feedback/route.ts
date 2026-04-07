@@ -40,7 +40,8 @@ Return ONLY the JSON array, no other text. Example format:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "anthropic/claude-opus-4-6",
+        model: "z-ai/glm-4.7:nitro",
+        provider: { order: ["Cerebras", "DeepInfra", "Nebius"] },
         stream: true,
         messages: [
           { role: "system", content: systemPrompt },
