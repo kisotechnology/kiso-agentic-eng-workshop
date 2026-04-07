@@ -41,7 +41,7 @@ Return ONLY the JSON array, no other text. Example format:
       },
       body: JSON.stringify({
         model: "z-ai/glm-4.7:nitro",
-        provider: { order: ["Cerebras"] },
+        provider: { order: ["Cerebras", "Groq", "Fireworks"] },
         stream: true,
         messages: [
           { role: "system", content: systemPrompt },
