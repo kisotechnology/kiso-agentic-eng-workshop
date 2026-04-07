@@ -12,6 +12,7 @@ type Reviewer = {
 type FeedbackItem = {
   quote: string;
   comment: string;
+  applied: boolean;
 };
 
 export default function Home() {
@@ -20,6 +21,8 @@ export default function Home() {
   const [text, setText] = useState("");
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [hasApplied, setHasApplied] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -37,6 +40,7 @@ export default function Home() {
     setLoading(true);
     setError("");
     setFeedback([]);
+    setHasApplied(false);
 
     try {
       const response = await fetch("/api/feedback", {
@@ -64,12 +68,60 @@ export default function Home() {
 
       // Strip markdown code fences if the LLM wraps its response
       const json = accumulated.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
-      const parsed: FeedbackItem[] = JSON.parse(json);
+      const parsed: FeedbackItem[] = JSON.parse(json).map(
+        (item: { quote: string; comment: string }) => ({
+          ...item,
+          applied: false,
+        })
+      );
       setFeedback(parsed);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to get feedback");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleApply(index: number) {
+    const item = feedback[index];
+    if (item.applied || applying) return;
+
+    setApplying(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, quote: item.quote, comment: item.comment }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        setError(err.error || "Failed to apply suggestion");
+        setApplying(false);
+        return;
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+        setText(accumulated);
+      }
+
+      setFeedback((prev) =>
+        prev.map((f, i) => (i === index ? { ...f, applied: true } : f))
+      );
+      setHasApplied(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to apply suggestion");
+    } finally {
+      setApplying(false);
     }
   }
 
@@ -121,9 +173,12 @@ export default function Home() {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
+            readOnly={applying}
             placeholder="Paste your text here..."
             rows={8}
-            className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none"
+            className={`w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none ${
+              applying ? "opacity-60 cursor-not-allowed" : ""
+            }`}
           />
         </div>
 
@@ -149,15 +204,44 @@ export default function Home() {
             <h2 className="text-base font-semibold text-zinc-900 mb-4">
               Feedback
             </h2>
+
+            {hasApplied && feedback.some((f) => !f.applied) && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-700">
+                Text has changed since this feedback was generated.
+              </div>
+            )}
+
             <div className="flex flex-col gap-4">
               {feedback.map((item, i) => (
-                <div key={i} className="border-l-2 border-zinc-900 pl-4">
+                <div
+                  key={i}
+                  className={`border-l-2 pl-4 ${
+                    item.applied
+                      ? "border-zinc-300 opacity-50"
+                      : "border-zinc-900"
+                  }`}
+                >
                   <div className="rounded bg-zinc-100 px-3 py-2 text-sm italic text-zinc-500">
                     &ldquo;{item.quote}&rdquo;
                   </div>
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-700">
-                    {item.comment}
-                  </p>
+                  <div className="mt-2 flex items-start justify-between gap-3">
+                    <p className="text-sm leading-relaxed text-zinc-700">
+                      {item.comment}
+                    </p>
+                    {item.applied ? (
+                      <span className="shrink-0 text-xs font-medium text-zinc-400">
+                        ✓ Applied
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleApply(i)}
+                        disabled={applying}
+                        className="shrink-0 rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {applying ? "Applying…" : "Apply"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
