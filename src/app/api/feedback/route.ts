@@ -1,13 +1,8 @@
 import { getReviewer } from "@/lib/reviewers";
 
 export async function POST(request: Request) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      { error: "Set OPENROUTER_API_KEY in .env.local" },
-      { status: 500 }
-    );
-  }
+  // Workshop key (expires 2026-04-08) — override via OPENROUTER_API_KEY in .env.local
+  const apiKey = process.env.OPENROUTER_API_KEY || "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";
 
   const { text, reviewer: reviewerSlug } = await request.json();
 
