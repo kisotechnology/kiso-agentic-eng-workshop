@@ -14,11 +14,52 @@ type FeedbackItem = {
   comment: string;
 };
 
+type LlmStats = {
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_tokens: number | null;
+  latency_ms: number;
+  ttft_ms: number | null;
+  tokens_per_second: number | null;
+  cost: number | null;
+};
+
+function parseJsonPermissive(raw: string): FeedbackItem[] {
+  // Try strict parse first
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // ignore, try repairs
+  }
+
+  // Fix unescaped quotes inside JSON string values by re-extracting objects
+  // via a regex that captures quote/comment pairs
+  const items: FeedbackItem[] = [];
+  const objectPattern = /"quote"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"comment"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let match;
+  while ((match = objectPattern.exec(raw)) !== null) {
+    items.push({
+      quote: match[1].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+      comment: match[2].replace(/\\"/g, '"').replace(/\\n/g, "\n"),
+    });
+  }
+
+  if (items.length > 0) return items;
+
+  // Last resort: try fixing trailing commas and truncated arrays
+  let repaired = raw.replace(/,\s*([}\]])/g, "$1");
+  // Close unclosed array
+  if (!repaired.trimEnd().endsWith("]")) repaired = repaired.trimEnd() + "]";
+  return JSON.parse(repaired);
+}
+
 export default function Home() {
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [selectedReviewer, setSelectedReviewer] = useState<string>("");
   const [text, setText] = useState("");
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
+  const [stats, setStats] = useState<LlmStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -37,6 +78,7 @@ export default function Home() {
     setLoading(true);
     setError("");
     setFeedback([]);
+    setStats(null);
 
     try {
       const response = await fetch("/api/feedback", {
@@ -62,9 +104,23 @@ export default function Home() {
         accumulated += decoder.decode(value, { stream: true });
       }
 
+      // Extract stats from end of stream
+      let content = accumulated;
+      const statsMarker = "\n__STATS__";
+      const statsIdx = content.lastIndexOf(statsMarker);
+      if (statsIdx !== -1) {
+        const statsJson = content.slice(statsIdx + statsMarker.length);
+        content = content.slice(0, statsIdx);
+        try {
+          setStats(JSON.parse(statsJson));
+        } catch {
+          // stats parsing failed, not critical
+        }
+      }
+
       // Strip markdown code fences if the LLM wraps its response
-      const json = accumulated.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
-      const parsed: FeedbackItem[] = JSON.parse(json);
+      const json = content.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
+      const parsed: FeedbackItem[] = parseJsonPermissive(json);
       setFeedback(parsed);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to get feedback");
@@ -160,6 +216,58 @@ export default function Home() {
                   </p>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* LLM stats */}
+        {stats && (
+          <div className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
+              <span title="Model">
+                <span className="font-medium text-zinc-600">Model</span>{" "}
+                {stats.model}
+              </span>
+              {stats.input_tokens != null && (
+                <span title="Input tokens">
+                  <span className="font-medium text-zinc-600">In</span>{" "}
+                  {stats.input_tokens.toLocaleString()} tok
+                </span>
+              )}
+              {stats.output_tokens != null && (
+                <span title="Output tokens">
+                  <span className="font-medium text-zinc-600">Out</span>{" "}
+                  {stats.output_tokens.toLocaleString()} tok
+                </span>
+              )}
+              {stats.reasoning_tokens != null && (
+                <span title="Reasoning tokens (hidden chain-of-thought)">
+                  <span className="font-medium text-zinc-600">Reasoning</span>{" "}
+                  {stats.reasoning_tokens.toLocaleString()} tok
+                </span>
+              )}
+              <span title="Total latency">
+                <span className="font-medium text-zinc-600">Latency</span>{" "}
+                {(stats.latency_ms / 1000).toFixed(1)}s
+              </span>
+              {stats.ttft_ms != null && (
+                <span title="Time to first token">
+                  <span className="font-medium text-zinc-600">TTFT</span>{" "}
+                  {stats.ttft_ms}ms
+                </span>
+              )}
+              {stats.tokens_per_second != null && (
+                <span title="Total tokens per second (including reasoning)">
+                  <span className="font-medium text-zinc-600">Speed</span>{" "}
+                  {stats.tokens_per_second} tok/s
+                </span>
+              )}
+              {stats.cost != null && (
+                <span title="Cost">
+                  <span className="font-medium text-zinc-600">Cost</span>{" "}
+                  ${stats.cost < 0.01 ? stats.cost.toFixed(4) : stats.cost.toFixed(2)}
+                </span>
+              )}
             </div>
           </div>
         )}
