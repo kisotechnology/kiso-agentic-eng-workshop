@@ -44,6 +44,7 @@ Return ONLY the JSON array, no other text. Example format:
       },
       body: JSON.stringify({
         model,
+        max_tokens: 2048,
         provider: { order: ["Cerebras", "DeepInfra", "Nebius"] },
         stream: true,
         messages: [
