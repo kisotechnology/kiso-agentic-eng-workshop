@@ -54,12 +54,63 @@ function parseJsonPermissive(raw: string): FeedbackItem[] {
   return JSON.parse(repaired);
 }
 
+async function fetchReviewerFeedback(
+  text: string,
+  reviewerSlug: string
+): Promise<{ feedback: FeedbackItem[]; stats: LlmStats | null }> {
+  const response = await fetch("/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, reviewer: reviewerSlug }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Something went wrong");
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    accumulated += decoder.decode(value, { stream: true });
+  }
+
+  let content = accumulated;
+  let stats: LlmStats | null = null;
+  const statsMarker = "\n__STATS__";
+  const statsIdx = content.lastIndexOf(statsMarker);
+  if (statsIdx !== -1) {
+    const statsJson = content.slice(statsIdx + statsMarker.length);
+    content = content.slice(0, statsIdx);
+    try {
+      stats = JSON.parse(statsJson);
+    } catch {
+      // stats parsing failed, not critical
+    }
+  }
+
+  const json = content
+    .replace(/^```(?:json)?\s*\n?/m, "")
+    .replace(/\n?```\s*$/m, "")
+    .trim();
+  const feedback = parseJsonPermissive(json);
+  return { feedback, stats };
+}
+
 export default function Home() {
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
-  const [selectedReviewer, setSelectedReviewer] = useState<string>("");
+  const [selectedReviewers, setSelectedReviewers] = useState<string[]>([]);
   const [text, setText] = useState("");
-  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
-  const [stats, setStats] = useState<LlmStats | null>(null);
+  const [reviewerFeedback, setReviewerFeedback] = useState<
+    Record<string, FeedbackItem[]>
+  >({});
+  const [reviewerStats, setReviewerStats] = useState<
+    Record<string, LlmStats>
+  >({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -68,66 +119,56 @@ export default function Home() {
       .then((res) => res.json())
       .then((data: Reviewer[]) => {
         setReviewers(data);
-        if (data.length === 1) setSelectedReviewer(data[0].slug);
+        if (data.length === 1)
+          setSelectedReviewers([data[0].slug]);
       });
   }, []);
 
+  function toggleReviewer(slug: string) {
+    setSelectedReviewers((prev) =>
+      prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug]
+    );
+  }
+
   async function handleSubmit() {
-    if (!text.trim() || !selectedReviewer) return;
+    if (!text.trim() || selectedReviewers.length === 0) return;
 
     setLoading(true);
     setError("");
-    setFeedback([]);
-    setStats(null);
+    setReviewerFeedback({});
+    setReviewerStats({});
 
-    try {
-      const response = await fetch("/api/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, reviewer: selectedReviewer }),
-      });
+    const errors: string[] = [];
 
-      if (!response.ok) {
-        const err = await response.json();
-        setError(err.error || "Something went wrong");
-        setLoading(false);
-        return;
-      }
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-      let accumulated = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        accumulated += decoder.decode(value, { stream: true });
-      }
-
-      // Extract stats from end of stream
-      let content = accumulated;
-      const statsMarker = "\n__STATS__";
-      const statsIdx = content.lastIndexOf(statsMarker);
-      if (statsIdx !== -1) {
-        const statsJson = content.slice(statsIdx + statsMarker.length);
-        content = content.slice(0, statsIdx);
+    await Promise.allSettled(
+      selectedReviewers.map(async (slug) => {
         try {
-          setStats(JSON.parse(statsJson));
-        } catch {
-          // stats parsing failed, not critical
+          const result = await fetchReviewerFeedback(text, slug);
+          setReviewerFeedback((prev) => ({
+            ...prev,
+            [slug]: result.feedback,
+          }));
+          if (result.stats) {
+            setReviewerStats((prev) => ({
+              ...prev,
+              [slug]: result.stats!,
+            }));
+          }
+        } catch (e) {
+          errors.push(
+            `${slug}: ${e instanceof Error ? e.message : "Failed to get feedback"}`
+          );
         }
-      }
+      })
+    );
 
-      // Strip markdown code fences if the LLM wraps its response
-      const json = content.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
-      const parsed: FeedbackItem[] = parseJsonPermissive(json);
-      setFeedback(parsed);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to get feedback");
-    } finally {
-      setLoading(false);
+    if (errors.length > 0) {
+      setError(errors.join("; "));
     }
+    setLoading(false);
   }
+
+  const hasAnyFeedback = Object.keys(reviewerFeedback).length > 0;
 
   return (
     <div className="flex flex-col flex-1 items-center bg-zinc-50 font-sans">
@@ -136,21 +177,21 @@ export default function Home() {
           Writing Feedback Studio
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Paste your writing, pick a reviewer, get feedback.
+          Paste your writing, pick reviewers, get feedback.
         </p>
 
         {/* Reviewer selector */}
         <div className="mt-8">
           <label className="block text-sm font-medium text-zinc-600 mb-2">
-            Reviewer
+            Reviewers
           </label>
           <div className="flex flex-col gap-2">
             {reviewers.map((r) => (
               <button
                 key={r.slug}
-                onClick={() => setSelectedReviewer(r.slug)}
+                onClick={() => toggleReviewer(r.slug)}
                 className={`w-full flex items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors focus:outline-none ${
-                  selectedReviewer === r.slug
+                  selectedReviewers.includes(r.slug)
                     ? "border-zinc-900 bg-white ring-1 ring-zinc-900"
                     : "border-zinc-200 bg-white hover:border-zinc-300"
                 }`}
@@ -162,7 +203,9 @@ export default function Home() {
                   <div className="text-sm font-medium text-zinc-900">
                     {r.name}
                   </div>
-                  <div className="text-xs text-zinc-500 truncate">{r.description}</div>
+                  <div className="text-xs text-zinc-500 truncate">
+                    {r.description}
+                  </div>
                 </div>
               </button>
             ))}
@@ -186,7 +229,7 @@ export default function Home() {
         {/* Submit button */}
         <button
           onClick={handleSubmit}
-          disabled={loading || !text.trim() || !selectedReviewer}
+          disabled={loading || !text.trim() || selectedReviewers.length === 0}
           className="mt-4 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {loading ? "Reviewing..." : "Get Feedback"}
@@ -199,75 +242,131 @@ export default function Home() {
           </div>
         )}
 
-        {/* Feedback display */}
-        {feedback.length > 0 && (
+        {/* Feedback display — grouped by reviewer */}
+        {hasAnyFeedback && (
           <div className="mt-8 border-t border-zinc-200 pt-6">
             <h2 className="text-base font-semibold text-zinc-900 mb-4">
               Feedback
             </h2>
-            <div className="flex flex-col gap-4">
-              {feedback.map((item, i) => (
-                <div key={i} className="border-l-2 border-zinc-900 pl-4">
-                  <div className="rounded bg-zinc-100 px-3 py-2 text-sm italic text-zinc-500">
-                    &ldquo;{item.quote}&rdquo;
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-700">
-                    {item.comment}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+            <div className="flex flex-col gap-8">
+              {reviewers
+                .filter((r) => reviewerFeedback[r.slug])
+                .map((r) => (
+                  <div key={r.slug}>
+                    {/* Reviewer header */}
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-900 text-[10px] font-semibold text-white">
+                        {r.avatar}
+                      </div>
+                      <span className="text-sm font-medium text-zinc-900">
+                        {r.name}
+                      </span>
+                    </div>
 
-        {/* LLM stats */}
-        {stats && (
-          <div className="mt-6 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
-              <span title="Model">
-                <span className="font-medium text-zinc-600">Model</span>{" "}
-                {stats.model}
-              </span>
-              {stats.input_tokens != null && (
-                <span title="Input tokens">
-                  <span className="font-medium text-zinc-600">In</span>{" "}
-                  {stats.input_tokens.toLocaleString()} tok
-                </span>
-              )}
-              {stats.output_tokens != null && (
-                <span title="Output tokens">
-                  <span className="font-medium text-zinc-600">Out</span>{" "}
-                  {stats.output_tokens.toLocaleString()} tok
-                </span>
-              )}
-              {stats.reasoning_tokens != null && (
-                <span title="Reasoning tokens (hidden chain-of-thought)">
-                  <span className="font-medium text-zinc-600">Reasoning</span>{" "}
-                  {stats.reasoning_tokens.toLocaleString()} tok
-                </span>
-              )}
-              <span title="Total latency">
-                <span className="font-medium text-zinc-600">Latency</span>{" "}
-                {(stats.latency_ms / 1000).toFixed(1)}s
-              </span>
-              {stats.ttft_ms != null && (
-                <span title="Time to first token">
-                  <span className="font-medium text-zinc-600">TTFT</span>{" "}
-                  {stats.ttft_ms}ms
-                </span>
-              )}
-              {stats.tokens_per_second != null && (
-                <span title="Total tokens per second (including reasoning)">
-                  <span className="font-medium text-zinc-600">Speed</span>{" "}
-                  {stats.tokens_per_second} tok/s
-                </span>
-              )}
-              {stats.cost != null && (
-                <span title="Cost">
-                  <span className="font-medium text-zinc-600">Cost</span>{" "}
-                  ${stats.cost < 0.01 ? stats.cost.toFixed(4) : stats.cost.toFixed(2)}
-                </span>
-              )}
+                    {/* Feedback items */}
+                    <div className="flex flex-col gap-4">
+                      {reviewerFeedback[r.slug].map((item, i) => (
+                        <div
+                          key={i}
+                          className="border-l-2 border-zinc-900 pl-4"
+                        >
+                          <div className="rounded bg-zinc-100 px-3 py-2 text-sm italic text-zinc-500">
+                            &ldquo;{item.quote}&rdquo;
+                          </div>
+                          <p className="mt-2 text-sm leading-relaxed text-zinc-700">
+                            {item.comment}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Per-reviewer stats */}
+                    {reviewerStats[r.slug] && (
+                      <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+                        <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
+                          <span title="Model">
+                            <span className="font-medium text-zinc-600">
+                              Model
+                            </span>{" "}
+                            {reviewerStats[r.slug].model}
+                          </span>
+                          {reviewerStats[r.slug].input_tokens != null && (
+                            <span title="Input tokens">
+                              <span className="font-medium text-zinc-600">
+                                In
+                              </span>{" "}
+                              {reviewerStats[
+                                r.slug
+                              ].input_tokens!.toLocaleString()}{" "}
+                              tok
+                            </span>
+                          )}
+                          {reviewerStats[r.slug].output_tokens != null && (
+                            <span title="Output tokens">
+                              <span className="font-medium text-zinc-600">
+                                Out
+                              </span>{" "}
+                              {reviewerStats[
+                                r.slug
+                              ].output_tokens!.toLocaleString()}{" "}
+                              tok
+                            </span>
+                          )}
+                          {reviewerStats[r.slug].reasoning_tokens !=
+                            null && (
+                            <span title="Reasoning tokens (hidden chain-of-thought)">
+                              <span className="font-medium text-zinc-600">
+                                Reasoning
+                              </span>{" "}
+                              {reviewerStats[
+                                r.slug
+                              ].reasoning_tokens!.toLocaleString()}{" "}
+                              tok
+                            </span>
+                          )}
+                          <span title="Total latency">
+                            <span className="font-medium text-zinc-600">
+                              Latency
+                            </span>{" "}
+                            {(
+                              reviewerStats[r.slug].latency_ms / 1000
+                            ).toFixed(1)}
+                            s
+                          </span>
+                          {reviewerStats[r.slug].ttft_ms != null && (
+                            <span title="Time to first token">
+                              <span className="font-medium text-zinc-600">
+                                TTFT
+                              </span>{" "}
+                              {reviewerStats[r.slug].ttft_ms}ms
+                            </span>
+                          )}
+                          {reviewerStats[r.slug].tokens_per_second !=
+                            null && (
+                            <span title="Total tokens per second (including reasoning)">
+                              <span className="font-medium text-zinc-600">
+                                Speed
+                              </span>{" "}
+                              {reviewerStats[r.slug].tokens_per_second}{" "}
+                              tok/s
+                            </span>
+                          )}
+                          {reviewerStats[r.slug].cost != null && (
+                            <span title="Cost">
+                              <span className="font-medium text-zinc-600">
+                                Cost
+                              </span>{" "}
+                              $
+                              {reviewerStats[r.slug].cost! < 0.01
+                                ? reviewerStats[r.slug].cost!.toFixed(4)
+                                : reviewerStats[r.slug].cost!.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
             </div>
           </div>
         )}
