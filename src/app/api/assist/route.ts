@@ -3,9 +3,9 @@ import { getAssistant } from "@/lib/assistants";
 export async function POST(request: Request) {
   const apiKey = process.env.OPENROUTER_API_KEY || "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";
 
-  const { text, assistant: assistantSlug } = await request.json();
+  const { text, assistant: assistantSlug, pdf } = await request.json();
 
-  if (!text || !assistantSlug) {
+  if ((!text && !pdf) || !assistantSlug) {
     return Response.json(
       { error: "Missing text or assistant" },
       { status: 400 }
@@ -25,6 +25,33 @@ ${assistant.content}
 
 Process the input below according to your role. Respond naturally in plain text — do NOT return JSON.`;
 
+  // Build user message content — either plain text or a document content block for PDFs
+  type ContentPart =
+    | { type: "text"; text: string }
+    | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
+
+  let userContent: string | ContentPart[];
+  if (pdf) {
+    const parts: ContentPart[] = [
+      {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: pdf.data,
+        },
+      },
+    ];
+    if (text) {
+      parts.push({ type: "text", text });
+    } else {
+      parts.push({ type: "text", text: `Process this PDF document (${pdf.name}) according to your role.` });
+    }
+    userContent = parts;
+  } else {
+    userContent = text;
+  }
+
   const startTime = Date.now();
   const model = "z-ai/glm-4.7:nitro";
 
@@ -42,7 +69,7 @@ Process the input below according to your role. Respond naturally in plain text 
         stream: true,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: text },
+          { role: "user", content: userContent },
         ],
       }),
     }
