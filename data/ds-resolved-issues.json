@@ -1,0 +1,44 @@
+[
+  {
+    "id": "DS-142",
+    "title": "Printer failure prediction model accuracy below target",
+    "resolved": "2026-04-07",
+    "description": "The XGBoost model predicting print-head failures on OfficeJet Pro 9025e was achieving only 71% recall. Root cause was class imbalance in the training set — only 3.2% of samples were failure events. Applied SMOTE oversampling and tuned the decision threshold from 0.5 to 0.32. Final recall reached 89% with precision at 76%. Model deployed to staging."
+  },
+  {
+    "id": "DS-138",
+    "title": "ETL pipeline dropping null ink-level readings",
+    "resolved": "2026-04-04",
+    "description": "Discovered that the nightly ETL job was silently dropping rows where ink_level_pct was NULL, affecting ~12% of telemetry records from LaserJet Enterprise fleet. These NULLs were legitimate sensor timeouts, not bad data. Fixed the pipeline to preserve NULLs and added a data quality check that alerts when drop rate exceeds 5%."
+  },
+  {
+    "id": "DS-135",
+    "title": "Customer churn segmentation refresh for Q1 2026",
+    "resolved": "2026-04-01",
+    "description": "Rebuilt the quarterly churn segmentation model using updated purchase and support-ticket data through March 2026. Identified a new high-risk segment: small-business customers with 3+ support tickets in 90 days and declining supply orders. Segment size is ~8,400 accounts representing $2.1M ARR. Handed off to marketing for targeted retention campaign."
+  },
+  {
+    "id": "DS-131",
+    "title": "A/B test analysis for new toner subscription pricing",
+    "resolved": "2026-03-28",
+    "description": "Completed statistical analysis of the 6-week A/B test comparing current toner subscription pricing ($24.99/mo) against tiered pricing ($19.99/$27.99/$34.99). Tiered pricing group showed 14% higher conversion rate (p=0.003) and 8% higher average revenue per user. Recommended rollout of tiered pricing with 95% confidence. Report delivered to product team."
+  },
+  {
+    "id": "DS-127",
+    "title": "Anomaly detection for print volume spikes",
+    "resolved": "2026-03-25",
+    "description": "Built an isolation forest model to detect unusual print volume spikes across managed print services accounts. The model flags accounts with volume exceeding 3.2 standard deviations from their rolling 30-day baseline. Caught 4 previously unnoticed billing anomalies in back-testing. Deployed as a daily batch job feeding into the ops dashboard."
+  },
+  {
+    "id": "DS-123",
+    "title": "Supply chain demand forecast model retraining",
+    "resolved": "2026-03-21",
+    "description": "Retrained the LSTM demand forecasting model for ink cartridge SKUs using 18 months of updated sales data. Incorporated a new feature for regional promotion calendars which reduced MAPE from 11.3% to 8.7% on the holdout set. Model now covers 340 SKUs across NA and EMEA regions. Scheduled for production deployment next sprint."
+  },
+  {
+    "id": "DS-119",
+    "title": "Dashboard performance audit for exec analytics portal",
+    "resolved": "2026-03-18",
+    "description": "Profiled the executive analytics Tableau dashboard and found that three cross-database joins were causing 45-second load times. Replaced with pre-materialized views in Snowflake, reducing average load time to 3.2 seconds. Also identified and removed 6 unused calculated fields that were consuming compute on every refresh."
+  }
+]
