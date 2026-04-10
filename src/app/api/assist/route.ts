@@ -1,4 +1,6 @@
 import { getAssistant } from "@/lib/assistants";
+import { readFile } from "fs/promises";
+import path from "path";
 
 export async function POST(request: Request) {
   const apiKey = process.env.OPENROUTER_API_KEY || "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";
@@ -17,7 +19,35 @@ export async function POST(request: Request) {
     return Response.json({ error: "Assistant not found" }, { status: 404 });
   }
 
-  const systemPrompt = `You are ${assistant.name}. You process incoming information and transform it for your supported role.
+  const model = "z-ai/glm-4.7:nitro";
+
+  // For the data-scientist assistant, classify whether the user is asking for an update
+  let useUpdateAgent = false;
+  if (assistantSlug === "data-scientist" && text && !pdf) {
+    useUpdateAgent = await classifyUpdateRequest(apiKey, model, text);
+  }
+
+  let systemPrompt: string;
+  let userContent: string | ContentPart[];
+
+  if (useUpdateAgent) {
+    // Load the update agent persona and resolved issues data
+    const updateAgent = await getAssistant("ds-updates");
+    const issuesRaw = await readFile(
+      path.join(process.cwd(), "data", "ds-resolved-issues.json"),
+      "utf-8"
+    );
+
+    systemPrompt = `You are ${updateAgent!.name}. ${updateAgent!.content}
+
+Here are the recently resolved issues:
+
+${issuesRaw}
+
+Respond to the user's request based on these issues. Respond naturally — do NOT return JSON.`;
+    userContent = text;
+  } else {
+    systemPrompt = `You are ${assistant.name}. You process incoming information and transform it for your supported role.
 
 Here is your role and response style:
 
@@ -25,35 +55,30 @@ ${assistant.content}
 
 Process the input below according to your role. Respond naturally in plain text — do NOT return JSON.`;
 
-  // Build user message content — either plain text or a document content block for PDFs
-  type ContentPart =
-    | { type: "text"; text: string }
-    | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
-
-  let userContent: string | ContentPart[];
-  if (pdf) {
-    const parts: ContentPart[] = [
-      {
-        type: "document",
-        source: {
-          type: "base64",
-          media_type: "application/pdf",
-          data: pdf.data,
+    // Build user message content — either plain text or a document content block for PDFs
+    if (pdf) {
+      const parts: ContentPart[] = [
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: pdf.data,
+          },
         },
-      },
-    ];
-    if (text) {
-      parts.push({ type: "text", text });
+      ];
+      if (text) {
+        parts.push({ type: "text", text });
+      } else {
+        parts.push({ type: "text", text: `Process this PDF document (${pdf.name}) according to your role.` });
+      }
+      userContent = parts;
     } else {
-      parts.push({ type: "text", text: `Process this PDF document (${pdf.name}) according to your role.` });
+      userContent = text;
     }
-    userContent = parts;
-  } else {
-    userContent = text;
   }
 
   const startTime = Date.now();
-  const model = "z-ai/glm-4.7:nitro";
 
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -148,4 +173,43 @@ Process the input below according to your role. Respond naturally in plain text 
   return new Response(stream, {
     headers: { "Content-Type": "text/plain; charset=utf-8" },
   });
+}
+
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
+
+async function classifyUpdateRequest(
+  apiKey: string,
+  model: string,
+  userText: string
+): Promise<boolean> {
+  const response = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        provider: { order: ["Cerebras", "DeepInfra", "Nebius"] },
+        messages: [
+          {
+            role: "system",
+            content:
+              'You are a classifier. Determine if the user is asking for a status update, progress report, or summary of recent work. Respond with ONLY "yes" or "no".',
+          },
+          { role: "user", content: userText },
+        ],
+      }),
+    }
+  );
+
+  if (!response.ok) return false;
+
+  const data = await response.json();
+  const answer = (data.choices?.[0]?.message?.content ?? "").trim().toLowerCase();
+  return answer.startsWith("yes");
 }

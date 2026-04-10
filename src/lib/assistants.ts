@@ -39,6 +39,7 @@ export async function listAssistants(): Promise<Assistant[]> {
     if (!file.endsWith(".md")) continue;
     const raw = await readFile(path.join(ASSISTANTS_DIR, file), "utf-8");
     const { attributes } = parseFrontmatter(raw);
+    if (attributes.internal === "true") continue;
     assistants.push({
       slug: file.replace(/\.md$/, ""),
       name: attributes.name || file.replace(/\.md$/, ""),
